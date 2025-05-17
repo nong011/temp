@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drug Fridge Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai+Rounded:wght@400;700&display=swap" rel="stylesheet">
+  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+  <style>
+    body {
+      font-family: 'Noto Sans Thai Rounded', sans-serif;
+      background-color: #f6f1fb;
+      margin: 0;
+      padding: 2rem;
+      color: #4a4a4a;
+    }
+    .container {
+      background-color: #ffffff;
+      max-width: 960px;
+      margin: auto;
+      padding: 2rem;
+      border-radius: 20px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+    }
+    .footer {
+      text-align: center;
+      margin-top: 2rem;
+      font-size: 0.9rem;
+      color: #999;
+    }
+    .timestamp {
+      text-align: center;
+      font-size: 1rem;
+      margin-bottom: 1rem;
+      color: #7c3aed;
+    }
+    .range-buttons {
+      display: flex;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .range-buttons button {
+      background-color: #f3e8ff;
+      border: none;
+      border-radius: 1rem;
+      padding: 0.5rem 1.2rem;
+      font-size: 1rem;
+      color: #6b21a8;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    }
+    .range-buttons button.active,
+    .range-buttons button:hover {
+      background-color: #d8b4fe;
+      font-weight: bold;
+    }
+    .gauges {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .gauge-box {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 1rem;
+      border-radius: 16px;
+      padding: 1rem;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.05);
+    }
+    #box_Sheet1 { background: #D0F0F9; }  /* pastel blue */
+    #box_Sheet2 { background: #FFF4CC; }  /* pastel yellow */
+    #box_Sheet3 { background: #FFE1E8; }  /* pastel pink */
+
+    .gauge-title {
+      font-size: 1.1rem;
+      font-weight: bold;
+      color: #6b21a8;
+    }
+    .alert {
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.5); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 style="text-align:center; color:#7e5bef">DashBoard อุณหภูมิของตู้เย็นยา</h1>
+    <h3 style="text-align:center; font-weight:normal; color:#888">ติดตามและวิเคราะห์ข้อมูลอุณหภูมิแบบเรียลไทม์</h3>
+    <div class="timestamp" id="realtime_clock">Loading time...</div>
+    <div class="timestamp" id="latest_time"></div>
+
+    <div class="gauges">
+      <div class="gauge-box" id="box_Sheet1">
+        <div id="gauge_Sheet1" style="width: 200px; height: 200px;"></div>
+        <div class="gauge-title">ตู้เย็น Med1</div>
+      </div>
+      <div class="gauge-box" id="box_Sheet2">
+        <div id="gauge_Sheet2" style="width: 200px; height: 200px;"></div>
+        <div class="gauge-title">ตู้เย็น Med2</div>
+      </div>
+      <div class="gauge-box" id="box_Sheet3">
+        <div id="gauge_Sheet3" style="width: 200px; height: 200px;"></div>
+        <div class="gauge-title">ตู้เย็น Med3</div>
+      </div>
+    </div>
+
+    <div class="range-buttons">
+      <button onclick="updateChart(1, event)" class="active">ชั่วโมง</button>
+      <button onclick="updateChart(24, event)">วัน</button>
+      <button onclick="updateChart(168, event)">สัปดาห์</button>
+      <button onclick="updateChart(720, event)">เดือน</button>
+    </div>
+
+    <div id="chart_div" style="width: 100%; height: 400px;"></div>
+    <div class="footer">
+      © 2024 ระบบติดตามอุณหภูมิตู้เย็นยา By... Krairat Komdee, MD.
+    </div>
+  </div>
+
+  <script>
+    google.charts.load('current', {'packages':['corechart', 'gauge']});
+    google.charts.setOnLoadCallback(init);
+
+    const SHEET_ID = '1E358SHV4KHcR5vDy0R0qfbGwK2EXuUJE97wUeEd5sWg';
+    const SHEETS = ['Sheet1', 'Sheet2', 'Sheet3'];
+    let fullDataBySheet = {};
+    let currentRange = 1;
+
+    function parseDateDDMMYYYY(str) {
+      const [datePart, timePart] = str.split(' ');
+      const [day, month, year] = datePart.split('/');
+      return new Date(`${year}-${month}-${day}T${timePart}`);
+    }
+
+    async function init() {
+      await fetchAllSheets();
+      drawCombinedChart();
+      drawGauges();
+      setInterval(fetchAllSheets, 300000);
+      setInterval(updateClock, 1000);
+      updateClock();
+    }
+
+    async function fetchAllSheets() {
+      fullDataBySheet = {};
+      await Promise.all(SHEETS.map(sheet =>
+        fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?sheet=${sheet}`)
+          .then(res => res.text())
+          .then(rep => {
+            const json = JSON.parse(rep.substr(47).slice(0, -2));
+            const data = json.table.rows.map(r => {
+              const rawDate = r.c[0]?.f || r.c[0]?.v;
+              return {
+                time: parseDateDDMMYYYY(rawDate),
+                temp: parseFloat(r.c[1]?.v ?? 0)
+              }
+            });
+            fullDataBySheet[sheet] = data;
+          })
+      ));
+    }
+
+    function drawGauges() {
+      SHEETS.forEach(sheet => {
+        const temp = fullDataBySheet[sheet].at(-1)?.temp || 0;
+        const data = google.visualization.arrayToDataTable([
+          ['Label', 'Value'],
+          ['°C', temp]
+        ]);
+
+        const options = {
+          redFrom: -2, redTo: 2,
+          greenFrom: 2, greenTo: 8,
+          yellowFrom: 8, yellowTo: 12,
+          max: 12,
+          min: -2,
+          majorTicks: ['-2','0','2','4','6','8','10','12'],
+          minorTicks: 5,
+          greenColor: '#00ff00',
+          redColor: '#ff0000',
+          yellowColor: '#ff0000'
+        };
+
+        const box = document.getElementById('box_' + sheet);
+        if (temp < 2 || temp > 8) {
+          box.classList.add('alert');
+        } else {
+          box.classList.remove('alert');
+        }
+
+        new google.visualization.Gauge(document.getElementById('gauge_' + sheet)).draw(data, options);
+      });
+    }
+
+    function drawCombinedChart() {
+  const now = new Date();
+  const start = new Date(now.getTime() - currentRange * 60 * 60 * 1000);
+  const timestamps = new Set();
+  const alignedData = {};
+
+  SHEETS.forEach(sheet => {
+    alignedData[sheet] = fullDataBySheet[sheet]?.filter(d => d.time >= start) || [];
+    alignedData[sheet].forEach(d => timestamps.add(d.time.getTime()));
+  });
+
+  const uniqueTimes = Array.from(timestamps).sort().map(t => new Date(parseInt(t)));
+  const chartArray = [['Time', ...SHEETS.map(s => 'ตู้เย็น Med' + s.replace('Sheet', ''))]];
+  uniqueTimes.forEach(time => {
+    const row = [time];
+    SHEETS.forEach(sheet => {
+      const point = alignedData[sheet].find(d => d.time.getTime() === time.getTime());
+      row.push(point ? point.temp : null);
+    });
+    chartArray.push(row);
+  });
+
+  const data = google.visualization.arrayToDataTable(chartArray);
+  const options = {
+    title: `อุณหภูมิย้อนหลัง ${currentRange} ชั่วโมง`,
+    hAxis: { title: 'เวลา', format: 'dd/MM HH:mm' },
+    vAxis: { title: 'อุณหภูมิ (°C)' },
+    lineWidth: 2,
+    pointSize: 4,
+    legend: { position: 'bottom' },
+    colors: ['#FFB6B9', '#A5D8FF', '#C3FBA6'],
+    animation: {startup: true, duration: 1000, easing: 'out'}
+  };
+
+  const chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+  chart.draw(data, options);
+}
+
+function updateChart(range, event) {
+  currentRange = range;
+  document.querySelectorAll('.range-buttons button').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  drawCombinedChart();
+}
+
+function updateClock() {
+  const now = new Date();
+  document.getElementById("realtime_clock").innerText = `วันเวลาปัจจุบัน: ${now.toLocaleString('th-TH', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute:'2-digit', second:'2-digit', hour12: false
+  })}`;
+}
+  </script>
+</body>
+</html>
